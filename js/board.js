@@ -27,6 +27,7 @@
   let activePost = null;
   let openingPost = false;
   let pendingDownload = null;
+  let pendingReadyKey = "";
   let downloadPersist = Promise.resolve();
 
   function net(url, opts) {
@@ -253,6 +254,53 @@
 
   function isHostedPage(url) {
     return /gofile\.io\/d\//i.test(String(url || ""));
+  }
+
+  function remoteFileUrl(post, entry) {
+    const path = publicFilePath(post, entry);
+    return isHttpUrl(path) ? path : "";
+  }
+
+  function discordInvite() {
+    return "https://discord.gg/AGnasEfbQ";
+  }
+
+  function markMissingFile(meta) {
+    if (!meta) {
+      return;
+    }
+    meta.textContent = "";
+    meta.append(document.createTextNode("This pack file is missing. "));
+    const ask = document.createElement("a");
+    ask.href = discordInvite();
+    ask.target = "_blank";
+    ask.rel = "noopener noreferrer";
+    ask.textContent = "Ask in Discord";
+    meta.append(ask);
+  }
+
+  function openRemoteFile(url, name) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    if (name && !isHostedPage(url)) {
+      link.setAttribute("download", name);
+    }
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+
+  function bindRemoteLink(node, url, name) {
+    node.href = url;
+    node.target = "_blank";
+    node.rel = "noopener noreferrer";
+    if (name && !isHostedPage(url)) {
+      node.setAttribute("download", name);
+    } else {
+      node.removeAttribute("download");
+    }
   }
 
   function publicFilePath(post, entry) {
@@ -751,9 +799,6 @@
     closeAuth();
     syncAuthUi();
     renderPosts();
-    if (activePost && postPage && !postPage.hidden) {
-      fillDownloadRows(activePost);
-    }
     finishPendingDownload();
   }
 
@@ -977,12 +1022,20 @@
     const files = postFiles(post);
     if (files.length) {
       const locked = packNeedsLogin(post);
-      const stat = document.createElement("button");
+      const entry = files[0];
+      const remote = remoteFileUrl(post, entry);
+      const stat = !locked && remote
+        ? document.createElement("a")
+        : document.createElement("button");
       stat.className = locked ? "post-card__stat post-card__stat--lock" : "post-card__stat";
-      stat.type = "button";
+      if (stat.tagName === "A") {
+        bindRemoteLink(stat, remote, entry.name);
+      } else {
+        stat.type = "button";
+      }
       stat.setAttribute("aria-label", locked
-        ? "Log in to download " + (files[0].name || "file")
-        : "Download " + (files[0].name || "file"));
+        ? "Log in to download " + (entry.name || "file")
+        : "Download " + (entry.name || "file"));
       stat.append(
         svgNode(locked
           ? "M8 10V7a4 4 0 118 0v3M6 10h12v11H6z"
@@ -990,10 +1043,9 @@
         document.createTextNode(String(totalDownloads(post)))
       );
       stat.addEventListener("click", function (event) {
-        event.preventDefault();
         event.stopPropagation();
-        const entry = files[0];
         if (locked) {
+          event.preventDefault();
           pendingDownload = {
             postId: post.id,
             fileId: entry.id
@@ -1001,6 +1053,11 @@
           openAuth("download");
           return;
         }
+        if (remote) {
+          bumpDownloads(post, entry.id);
+          return;
+        }
+        event.preventDefault();
         downloadPostFile(post, entry, null);
       });
       foot.append(stat);
@@ -1229,39 +1286,57 @@
       meta.textContent = fileMetaLine(entry);
       body.append(name, meta);
       const locked = packNeedsLogin(post);
+      const remote = remoteFileUrl(post, entry);
+      const readyKey = post.id + ":" + entry.id;
       if (locked) {
         row.classList.add("dl--lock");
+        meta.textContent = "Log in to download";
+      } else if (pendingReadyKey === readyKey) {
+        meta.textContent = "You're in. Click download.";
+      } else if (!remote) {
+        row.classList.add("dl--missing");
+        markMissingFile(meta);
       }
-      const button = document.createElement("button");
+      const button = remote && !locked
+        ? document.createElement("a")
+        : document.createElement("button");
       button.className = locked ? "dl__btn dl__btn--lock" : "dl__btn";
-      button.type = "button";
+      if (button.tagName === "A") {
+        bindRemoteLink(button, remote, entry.name);
+      } else {
+        button.type = "button";
+      }
       button.setAttribute("aria-label", locked
         ? "Log in to download " + (entry.name || "file")
         : "Download " + (entry.name || "file"));
       button.append(svgNode(locked
         ? "M8 10V7a4 4 0 118 0v3M6 10h12v11H6z"
         : "M12 4v12m0 0l-4-4m4 4l4-4M5 19h14"));
-      if (locked) {
-        meta.textContent = "Log in to download";
-      }
-      function requestFile() {
+      function requestFile(event) {
+        if (event) {
+          if (button.tagName === "A" && !locked && remote) {
+            bumpDownloads(post, entry.id);
+            pendingReadyKey = "";
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+        }
         downloadPostFile(post, entry, meta);
       }
-      button.addEventListener("click", function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        requestFile();
-      });
+      button.addEventListener("click", requestFile);
       if (locked) {
         row.addEventListener("click", requestFile);
       }
       row.append(icon, body, button);
       postViewDownloads.append(row);
-      loadPostFile(fileKey(post.id, entry.id)).then(function (record) {
-        if (record && record.blob && record.blob.size && !entry.size) {
-          meta.textContent = fileMetaLine(Object.assign({}, entry, { size: record.blob.size }));
-        }
-      });
+      if (!locked && !remote) {
+        loadPostFile(fileKey(post.id, entry.id)).then(function (record) {
+          if (record && record.blob && record.blob.size && !entry.size) {
+            meta.textContent = fileMetaLine(Object.assign({}, entry, { size: record.blob.size }));
+          }
+        });
+      }
     });
   }
 
@@ -1275,6 +1350,13 @@
         meta.textContent = "Log in to download";
       }
       openAuth("download");
+      return;
+    }
+
+    const remote = remoteFileUrl(post, entry);
+    if (remote) {
+      bumpDownloads(post, entry.id);
+      openRemoteFile(remote, entry.name);
       return;
     }
 
@@ -1293,47 +1375,11 @@
     }
 
     loadPostFile(fileKey(post.id, entry.id)).then(function (record) {
-      if (record && record.blob) {
+      if (record && record.blob && record.blob.size) {
         saveBlob(record.blob, record.name || entry.name);
         return;
       }
-      const path = publicFilePath(post, entry);
-      const api = cloud();
-      if (!path) {
-        if (meta) {
-          meta.textContent = "File is not saved on this device";
-        }
-        return;
-      }
-      if (isHostedPage(path)) {
-        bumpDownloads(post, entry.id);
-        window.open(path, "_blank", "noopener");
-        return;
-      }
-      if (meta) {
-        meta.textContent = "Downloading…";
-      }
-      const href = api ? api.publicUrl(path) : path;
-      net(href, { cache: "no-store" }).then(function (res) {
-        if (!res.ok) {
-          throw new Error("missing");
-        }
-        return res.blob();
-      }).then(function (blob) {
-        saveBlob(blob, entry.name);
-        if (meta) {
-          meta.textContent = fileMetaLine(Object.assign({}, entry, { size: blob.size }));
-        }
-      }).catch(function () {
-        if (isHttpUrl(path)) {
-          bumpDownloads(post, entry.id);
-          window.open(path, "_blank", "noopener");
-          return;
-        }
-        if (meta) {
-          meta.textContent = "File is not saved on this device";
-        }
-      });
+      markMissingFile(meta);
     });
   }
 
@@ -1343,19 +1389,13 @@
     if (!pending || !isSignedIn()) {
       return;
     }
+    pendingReadyKey = pending.postId + ":" + pending.fileId;
     const post = readPosts().filter(function (entry) {
       return entry.id === pending.postId;
     })[0] || (activePost && activePost.id === pending.postId ? activePost : null);
-    if (!post) {
-      return;
+    if (post) {
+      openPost(post);
     }
-    const entry = postFiles(post).filter(function (item) {
-      return item.id === pending.fileId;
-    })[0];
-    if (!entry) {
-      return;
-    }
-    downloadPostFile(post, entry, null);
   }
 
   function openPost(post, fromHash) {

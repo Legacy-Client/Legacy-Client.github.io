@@ -751,6 +751,7 @@ main {
   color: var(--text-secondary);
   font-family: inherit;
   font-size: var(--text-xs);
+  text-decoration: none;
   cursor: pointer;
   transition: background-color var(--speed) var(--ease), color var(--speed) var(--ease);
 }
@@ -1398,6 +1399,17 @@ body.is-shielded {
   font-size: var(--text-xs);
 }
 
+.dl__meta a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+}
+
+.dl__meta a:hover,
+.dl__meta a:focus-visible {
+  color: var(--accent);
+}
+
 .dl__btn {
   flex: 0 0 2.4rem;
   width: 2.4rem;
@@ -1409,6 +1421,7 @@ body.is-shielded {
   border-radius: 999px;
   background: var(--icon-bg);
   color: var(--text);
+  text-decoration: none;
   cursor: pointer;
 }
 

@@ -409,10 +409,11 @@
     body.append("file", blob, name);
     return net("https://upload.gofile.io/uploadfile", { method: "POST", body: body }).then(function (res) {
       return res.json().then(function (data) {
-        if (!res.ok || !data || data.status !== "ok" || !data.data || !data.data.downloadPage) {
+        if (!res.ok || !data || data.status !== "ok" || !data.data ||
+            !(data.data.directLink || data.data.downloadPage)) {
           throw new Error("Could not upload " + name);
         }
-        const url = data.data.downloadPage;
+        const url = data.data.directLink || data.data.downloadPage;
         return { url: url, path: url };
       });
     });
